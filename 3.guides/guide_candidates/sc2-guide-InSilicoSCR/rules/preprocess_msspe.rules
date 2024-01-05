@@ -1,0 +1,270 @@
+########### Preprocess MSSPE sequencing data
+
+rule _all_msspe_r1_kmers:
+    input:
+        expand(config["msspe"]["data_dir"] + "/msspe_reads/{sample}/pcr_reads_1.jf", sample = MSSPE_SAMPLES),
+        expand(config["msspe"]["data_dir"] + "/msspe_reads/{sample}/mngs_reads_1.jf", sample = MSSPE_SAMPLES),
+
+
+rule _all_msspe_reads:
+    input:
+        expand(config["msspe"]["data_dir"] + "/msspe_reads/{sample}/{grp}_reads_{rp}.fq",
+          sample = MSSPE_SAMPLES, grp=['pcr', "mngs"], rp=['1', '2'])
+
+
+rule _all_nonsc2_reads:
+    input:
+        expand(config["msspe"]["data_dir"] + "/preprocess/3_map_sc2/{sample}_nonsc2_1.fq.gz", sample = MSSPE_SAMPLES),
+        expand(config["msspe"]["data_dir"] + "/preprocess/3_map_sc2/{sample}_nonsc2_2.fq.gz", sample = MSSPE_SAMPLES),
+
+
+rule _all_sc2_reads:
+    input:
+        expand(config["msspe"]["data_dir"] + "/preprocess/4_ivar/{sample}_sc2_1.fq.gz", sample = MSSPE_SAMPLES),
+        expand(config["msspe"]["data_dir"] + "/preprocess/4_ivar/{sample}_sc2_2.fq.gz", sample = MSSPE_SAMPLES)
+
+
+rule filter_host_reads:
+    input:
+        r1 = config["msspe"]["data_dir"] + "/raw/{sample}_R1.fastq.gz",
+        r2 = config["msspe"]["data_dir"] + "/raw/{sample}_R2.fastq.gz",
+        host_ref = config["qc"]["host_ref"]
+    output:
+        r1 = config["msspe"]["data_dir"] + "/preprocess/1_filter_host/{sample}_no_host_1.fastq.gz",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/1_filter_host/{sample}_no_host_2.fastq.gz",
+    threads:
+        config["qc"]["threads"]
+    shell:
+        """
+        minimap2 -t {threads} -ax sr {input.host_ref} {input.r1} {input.r2} | \
+            samtools view -@ {threads} -b -f 4 | \
+            samtools fastq -@ {threads} -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n -c 6 -
+        """
+
+
+rule trim_illumina_adapter:
+    input:
+        r1 = config["msspe"]["data_dir"] + "/preprocess/1_filter_host/{sample}_no_host_1.fastq.gz",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/1_filter_host/{sample}_no_host_2.fastq.gz",
+    output:
+        r1 = config["msspe"]["data_dir"] + "/preprocess/2_trim_galore/{sample}_no_host_1_val_1.fq.gz",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/2_trim_galore/{sample}_no_host_2_val_2.fq.gz",
+    params:
+        config["msspe"]["data_dir"] + "/preprocess/2_trim_galore"
+    threads:
+        config["qc"]["threads"]
+    shell:
+        """
+        pushd {params}
+        trim_galore --fastqc --cores {threads} --paired {input.r1} {input.r2}
+        popd
+        """
+
+
+rule map_nonsc2_reads:
+    input:
+        r1 = config["msspe"]["data_dir"] + "/preprocess/2_trim_galore/{sample}_no_host_1_val_1.fq.gz",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/2_trim_galore/{sample}_no_host_2_val_2.fq.gz",
+        sc2_ref = config["qc"]["sc2_ref"]
+    output:
+        sc2_bam = config["msspe"]["data_dir"] + "/preprocess/3_map_sc2/bamfiles/{sample}_sc2.bam",
+        r1 = config["msspe"]["data_dir"] + "/preprocess/3_map_sc2/{sample}_nonsc2_1.fq.gz",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/3_map_sc2/{sample}_nonsc2_2.fq.gz",
+        ivar_bam = config["msspe"]["data_dir"] + "/preprocess/4_ivar/bamfiles/{sample}_ivar.bam"
+    threads:
+        config["qc"]["threads"]
+    shell:
+        """
+        minimap2 -ax sr -R '@RG\\tID:{wildcards.sample}\\tSM:{wildcards.sample}' {input.sc2_ref} {input.r1} {input.r2} | \
+            samtools sort -@ {threads} -O bam -o {output.sc2_bam}
+        # extract non-sc2 reads
+        samtools view -@ {threads} -b -f 4 {output.sc2_bam} | \
+            samtools fastq -@ {threads} -1 {output.r1} -2 {output.r2} -0 /dev/null -s /dev/null -n -c 6 -
+        # feed ivar the aligned reads' BAM file
+        samtools view -F4 -q 20 -o {output.ivar_bam} {output.sc2_bam} && \
+            samtools index {output.ivar_bam}
+        """
+
+
+rule clip_primer_sc2_reads:
+    input:
+        ivar_bam = config["msspe"]["data_dir"] + "/preprocess/4_ivar/bamfiles/{sample}_ivar.bam",
+        primer_bed = config["msspe"]["fwd_primer_bedfile"],
+    output:
+        ivar_out_bam = config["msspe"]["data_dir"] + "/preprocess/4_ivar/bamfiles/{sample}_ivar.out.bam",
+        trimmed_ivar_bam = config["msspe"]["data_dir"] + "/preprocess/4_ivar/bamfiles/{sample}.primertrimmed.bam",
+        trimmed_ivar_bambai = config["msspe"]["data_dir"] + "/preprocess/4_ivar/bamfiles/{sample}.primertrimmed.bam.bai",
+        r1 = config["msspe"]["data_dir"] + "/preprocess/4_ivar/{sample}_sc2_1.fq.gz",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/4_ivar/{sample}_sc2_2.fq.gz",
+    threads:
+        config["qc"]["threads"]
+    params:
+        ivar_out = config["msspe"]["data_dir"] + "/preprocess/4_ivar/bamfiles/{sample}_ivar.out",
+        ivar_log = config["msspe"]["data_dir"] + "/preprocess/4_ivar/logs/{sample}.ivar.log",
+    shell:
+        """
+        # soft clip the forward primers for the mapped sc2 reads
+        ivar trim -e -i {input.ivar_bam} -b {input.primer_bed} -p {params.ivar_out} 1> {params.ivar_log}
+
+        samtools sort -@ {threads} -O bam -o {output.trimmed_ivar_bam} {output.ivar_out_bam}
+        samtools index {output.trimmed_ivar_bam}
+
+        # extract primer-clipped clean sc2 reads
+        samtools fastq -@ {threads} -1 {output.r1} -2 ${output.r2} -0 /dev/null -s /dev/null -n -c 6 {output.trimmed_ivar_bam}
+        """
+
+
+############ Sequentially cut the forward primer from R1 and R2
+############ Read through ############
+# FWD primer (non-internal) homology
+rule cut_fwd_primer_paired:
+    input:
+        r1 = config["msspe"]["data_dir"] + "/preprocess/3_map_sc2/{sample}_nonsc2_1.fq.gz",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/3_map_sc2/{sample}_nonsc2_2.fq.gz",
+        xprimer_fasta = config["msspe"]["xprimer_fasta"],
+        rc_primer_x_fasta = config["msspe"]["rc_primer_x_fasta"],
+    output:
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed/paired_fwd_trimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed/paired_fwd_trimmed_2.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/paired_fwd_untrimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/paired_fwd_untrimmed_2.fq",
+    threads:
+        config["qc"]["threads"]
+    params:
+        log_fp = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/logs/{sample}/paired_fwd_trimmed_report.txt",
+    shell:
+        """
+        cutadapt --pair-adapters --pair-filter=first -m 1 --overlap 17 -e 0.1 --action=none \
+            -y '|{{name}}' -g file:{input.xprimer_fasta} -A file:{input.rc_primer_x_fasta} -j {threads} \
+            -o {output[0]} -p {output[1]} \
+            --untrimmed-output {output[2]} --untrimmed-paired-output {output[3]} \
+            <(gunzip -dc {input.r1}) <(gunzip -dc {input.r2}) 1> {params.log_fp}
+        """
+
+
+# RC primer (non-internal) homology
+rule cut_rc_primer_paired:
+    input:
+        r1 = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/paired_fwd_untrimmed_1.fq",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/paired_fwd_untrimmed_2.fq",
+        xprimer_fasta = config["msspe"]["xprimer_fasta"],
+        rc_primer_x_fasta = config["msspe"]["rc_primer_x_fasta"],
+    output:
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed/paired_rc_trimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed/paired_rc_trimmed_2.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/paired_rc_untrimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/paired_rc_untrimmed_2.fq",
+    threads:
+        config["qc"]["threads"]
+    params:
+        log_fp = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/logs/{sample}/paired_rc_trimmed_report.txt",
+    shell:
+        """
+        cutadapt --pair-adapters --pair-filter=first -m 1 --overlap 17 -e 0.1 --action=none \
+            -y '|{{name}}' -a file:{input.rc_primer_x_fasta} -G file:{input.xprimer_fasta} -j {threads} \
+            -o {output[0]} -p {output[1]} \
+            --untrimmed-output {output[2]} --untrimmed-paired-output {output[3]} \
+            {input.r1} {input.r2} 1> {params.log_fp}
+        """
+
+
+############ Long DNA fragments ############
+# FWD primer on R1 only
+rule cut_fwd_primer_r1:
+    input:
+        r1 = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/paired_rc_untrimmed_1.fq",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/paired_rc_untrimmed_2.fq",
+        xprimer_fasta = config["msspe"]["xprimer_fasta"],
+    output:
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed/single_fwd_trimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed/single_fwd_trimmed_2.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/single_fwd_untrimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/single_fwd_untrimmed_2.fq",
+    threads:
+        config["qc"]["threads"]
+    params:
+        log_fp = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/logs/{sample}/single_fwd_trimmed_report.txt",
+    shell:
+        """
+        cutadapt -g file:{input.xprimer_fasta} -j {threads} -m 1 -e 0.1 --overlap 17 --action=none \
+            -y '|{{name}}' -o {output[0]} --untrimmed-output {output[2]} {input.r1} 1> {params.log_fp}
+
+        # Collect corresponding R2 without primer at the 3' in the read
+        grep -A 3 --no-group-separator -Fwf \
+            <(grep '@' {output[0]} | cut -d'|' -f 1) {input.r2} > {output[1]}
+
+        grep -A 3 --no-group-separator -Fwf \
+            <(grep '@' {output[2]} | cut -d'|' -f 1) {input.r2} > {output[3]}
+        """
+
+
+# FWD primer on R2 only
+rule cut_fwd_primer_r2:
+    input:
+        r1 = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/single_fwd_untrimmed_1.fq",
+        r2 = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/single_fwd_untrimmed_2.fq",
+        xprimer_fasta = config["msspe"]["xprimer_fasta"],
+    output:
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed/single_rc_trimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed/single_rc_trimmed_2.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/single_rc_untrimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/single_rc_untrimmed_2.fq",
+    threads:
+        config["qc"]["threads"]
+    params:
+        log_fp = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/logs/{sample}/single_rc_trimmed_report.txt",
+    shell:
+        """
+        cutadapt -g file:{input.xprimer_fasta} -j {threads} -m 1 -e 0.1 --overlap 17 --action=none \
+            -y '|{{name}}' -o {output[1]} --untrimmed-output {output[3]} {input.r2} 1> {params.log_fp}
+
+        # Collect corresponding R2 without primer at the 3' in the read
+        grep -A 3 --no-group-separator -Fwf \
+            <(grep '@' {output[1]} | cut -d'|' -f 1) {input.r1} > {output[0]}
+
+        grep -A 3 --no-group-separator -Fwf \
+            <(grep '@' {output[3]} | cut -d'|' -f 1) {input.r1} > {output[2]}
+        """
+
+
+# Collect pcr and mngs reads
+rule classified_msspe_reads:
+    input:
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/single_rc_untrimmed_1.fq",
+        config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed/single_rc_untrimmed_2.fq",
+    output:
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/pcr_reads_1.fq",
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/pcr_reads_2.fq",
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/mngs_reads_1.fq",
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/mngs_reads_2.fq",
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/cutadapt_stats.txt",
+    params:
+        trimmed_dir = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/trimmed",
+        untrimmed_dir = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/{sample}/untrimmed",
+        log_dir = config["msspe"]["data_dir"] + "/preprocess/5_cutadapt/logs/{sample}"
+    shell:
+        """
+        cat {params.trimmed_dir}/*_1.fq > {output[0]}
+        cat {params.trimmed_dir}/*_2.fq > {output[1]}
+
+        cp {input[0]} {output[2]}
+        cp {input[1]} {output[3]}
+
+        grep "^Sequence" {params.log_dir}/*.txt > {output[4]}
+        """
+
+
+rule kmerize_msspe_reads:
+    input:
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/pcr_reads_1.fq",
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/mngs_reads_1.fq",
+    output:
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/pcr_reads_1.jf",
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/mngs_reads_1.jf",
+    threads:
+        8
+    shell:
+        """
+        jellyfish count -m 20 -t {threads} -C -s 100M -o {output[0]} {input[0]}
+        jellyfish count -m 20 -t {threads} -C -s 100M -o {output[1]} {input[1]}
+        """

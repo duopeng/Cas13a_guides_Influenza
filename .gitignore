@@ -1,3 +1,10 @@
+1.download_influenza_genomes/*.fa
+1.download_influenza_genomes/*.txt
+2.analyze_influenza_genomes/output/*.txt
+3.guides/*.tsv
+3.guides/guide_candidates/*.tsv
+3.guides/guide_candidates/*.xlsx
+3.guides/guide_candidates/sc2-guide-InSilicoSCR/targets.fa
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

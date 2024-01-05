@@ -1,0 +1,105 @@
+########### Search guide's d-neighbors against mNGS data
+
+
+rule _all_mreads_hmp:
+    input:
+        expand(config["project_dir"] + "/7_matched_neighbors_reads_hmp/{sample}.tsv", sample=HMP1_SAMPLES)
+
+
+rule _all_jf_hmp:
+    input:
+        expand(config["project_dir"] + "/5_jf_hmp/{sample}.tsv", sample=HMP1_SAMPLES)
+
+
+rule jf_kmer_count_hmp:
+    input:
+        config["hmp1"]["data_dir"] + "/jf_kmers/{sample}.jf"
+    output:
+        expand(config["project_dir"] + "/4_jf_hmp/{{sample}}/{guide}_hd.4.txt", guide=GUIDES),
+    threads:
+        config["jf"]["threads"]
+    params:
+        neighbor_dir = config["project_dir"] + "/1_neighbors",
+        jf_dir = config["project_dir"] + "/4_jf_hmp/{sample}",
+    shell:
+        """
+        ls {params.neighbor_dir} | xargs -Ixx -P {threads} bash -c \
+          'jellyfish query -s {params.neighbor_dir}/xx {input[0]} | awk "$0" > {params.jf_dir}/xx' '$2>0 {{print $0}}'
+        """
+
+
+rule merge_jf_hmp:
+    input:
+        expand(config["project_dir"] + "/4_jf_hmp/{{sample}}/{guide}_hd.4.txt", guide=GUIDES)
+    output:
+        config["project_dir"] + "/5_jf_hmp/{sample}.tsv"
+    params:
+        config["project_dir"] + "/4_jf_hmp/{sample}",
+        config["guide_fasta"]
+    threads:
+        config["jf"]["threads"]
+    shell:
+        """
+        python isscrlib/isscr.py --parse_matched_kmer --num_cores {threads} --candidate_spacers_file {params[1]} --jellyfish_ctdir {params[0]} --output_file {output[0]}
+        """
+
+
+rule matched_kmer_inc_canonical_hmp:
+    input:
+        config["project_dir"] + "/5_jf_hmp/{sample}.tsv"
+    output:
+        config["project_dir"] + "/6_matched_kmers_hmp/{sample}.txt"
+    threads:
+        16
+    shell:
+        """
+        # generate the reverse complement kmers
+        set +o pipefail
+        tail -n +2 {input[0]} | cut -f3 | tr ACGTacgt TGCAtgca | rev > {output[0]}
+        tail -n +2 {input[0]} | cut -f3 >> {output[0]}
+        """
+
+
+rule subset_matched_reads_hmp:
+    input:
+        config["project_dir"] + "/6_matched_kmers_hmp/{sample}.txt",
+        config["hmp1"]["data_dir"] + "/raw/{sample}/{sample}.denovo_duplicates_marked.trimmed.1.fastq"
+    output:
+        config["project_dir"] + "/6_matched_kmers_hmp/{sample}_1.fasta"
+    threads:
+        8
+    shell:
+        """
+        if [ -s {input[0]} ]
+        then
+            cat {input[0]} | sort -u | grep --no-group-separator -B1 -f - {input[1]} > {output[0]}
+        else
+            touch {output[0]}
+        fi
+        """
+
+
+rule matched_neighbor_reads_mapping_hmp:
+    input:
+        config["project_dir"] + "/5_jf_hmp/{sample}.tsv",
+        config["project_dir"] + "/6_matched_kmers_hmp/{sample}_1.fasta"
+    output:
+        config["project_dir"] + "/7_matched_neighbors_reads_hmp/{sample}.tsv"
+    threads:
+        8
+    params:
+        config["project_dir"] + "/7_matched_neighbors_reads_hmp",
+        config["guide_fasta"]
+    shell:
+        """
+        if [ -s {input[1]} ]
+        then
+          python isscrlib/isscr.py --query_matched_reads --num_cores {threads} \
+              --sample_name {wildcards.sample} --candidate_spacers_file {params[1]} \
+              --merged_kmers_file {input[0]} \
+              --subset_reads_fasta {input[1]} \
+              --output_dir {params[0]}
+        else
+          touch {output}
+        fi
+        """

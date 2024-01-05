@@ -1,0 +1,150 @@
+########### Search guide's d-neighbors against mNGS data
+
+
+rule _all_mreads_msspe:
+    input:
+        expand(config["project_dir"] + "/7_matched_neighbors_reads_msspe/{sample}_pcr_1.tsv", sample=MSSPE_SAMPLES),
+        expand(config["project_dir"] + "/7_matched_neighbors_reads_msspe/{sample}_mngs_1.tsv", sample=MSSPE_SAMPLES),
+
+
+rule _all_jf_msspe:
+    input:
+        expand(config["project_dir"] + "/5_jf_msspe/{sample}/pcr_reads_1.tsv", sample=MSSPE_SAMPLES),
+        expand(config["project_dir"] + "/5_jf_msspe/{sample}/mngs_reads_1.tsv", sample=MSSPE_SAMPLES)
+
+
+# count the cannoical kmers
+rule jf_kmer_count_msspe:
+    input:
+        pcr_r1 = config["msspe"]["data_dir"] + "/msspe_reads/{sample}/pcr_reads_1.jf",
+        mngs_r1 = config["msspe"]["data_dir"] + "/msspe_reads/{sample}/mngs_reads_1.jf"
+    output:
+        expand(config["project_dir"] + "/4_jf_msspe/{{sample}}/pcr_reads_1/{guide}_hd.4.txt", guide=GUIDES),
+        expand(config["project_dir"] + "/4_jf_msspe/{{sample}}/mngs_reads_1/{guide}_hd.4.txt", guide=GUIDES),
+    threads:
+        config["jf"]["threads"]
+    params:
+        neighbor_dir = config["project_dir"] + "/1_neighbors",
+        jf_pcr1_dir = config["project_dir"] + "/4_jf_msspe/{sample}/pcr_reads_1",
+        jf_mngs1_dir = config["project_dir"] + "/4_jf_msspe/{sample}/mngs_reads_1",
+    shell:
+        """
+        ls {params.neighbor_dir} | xargs -Ixx -P {threads} bash -c \
+          'jellyfish query -s {params.neighbor_dir}/xx {input.pcr_r1} | awk "$0" > {params.jf_pcr1_dir}/xx' '$2>0 {{print $0}}'
+
+        ls {params.neighbor_dir} | xargs -Ixx -P {threads} bash -c \
+          'jellyfish query -s {params.neighbor_dir}/xx {input.mngs_r1} | awk "$0" > {params.jf_mngs1_dir}/xx' '$2>0 {{print $0}}'
+        """
+
+
+rule merge_jf_msspe:
+    input:
+        expand(config["project_dir"] + "/4_jf_msspe/{{sample}}/pcr_reads_1/{guide}_hd.4.txt", guide=GUIDES),
+        expand(config["project_dir"] + "/4_jf_msspe/{{sample}}/mngs_reads_1/{guide}_hd.4.txt", guide=GUIDES),
+    output:
+        config["project_dir"] + "/5_jf_msspe/{sample}/pcr_reads_1.tsv",
+        config["project_dir"] + "/5_jf_msspe/{sample}/mngs_reads_1.tsv",
+    params:
+        config["project_dir"] + "/4_jf_msspe/{sample}/pcr_reads_1",
+        config["project_dir"] + "/4_jf_msspe/{sample}/mngs_reads_1",
+        config["guide_fasta"]
+    threads:
+        config["jf"]["threads"]
+    shell:
+        """
+        python isscrlib/isscr.py --parse_matched_kmer --num_cores {threads} --candidate_spacers_file {params[2]} --jellyfish_ctdir {params[0]} --output_file {output[0]}
+        python isscrlib/isscr.py --parse_matched_kmer --num_cores {threads} --candidate_spacers_file {params[2]} --jellyfish_ctdir {params[1]} --output_file {output[1]}
+        """
+
+
+rule matched_kmer_inc_canonical_msspe:
+    input:
+        config["project_dir"] + "/5_jf_msspe/{sample}/pcr_reads_1.tsv",
+        config["project_dir"] + "/5_jf_msspe/{sample}/mngs_reads_1.tsv",
+    output:
+        config["project_dir"] + "/6_matched_kmers_msspe/{sample}/pcr_reads_1.txt",
+        config["project_dir"] + "/6_matched_kmers_msspe/{sample}/mngs_reads_1.txt",
+    threads:
+        16
+    shell:
+        """
+        # generate the reverse complement kmers
+        set +o pipefail
+        tail -n +2 {input[0]} | cut -f3 | tr ACGTacgt TGCAtgca | rev > {output[0]}
+        tail -n +2 {input[0]} | cut -f3 >> {output[0]}
+
+        tail -n +2 {input[1]} | cut -f3 | tr ACGTacgt TGCAtgca | rev > {output[1]}
+        tail -n +2 {input[1]} | cut -f3 >> {output[1]}
+        """
+
+
+rule subset_matched_reads_msspe:
+    input:
+        config["project_dir"] + "/6_matched_kmers_msspe/{sample}/pcr_reads_1.txt",
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/pcr_reads_1.fq",
+
+        config["project_dir"] + "/6_matched_kmers_msspe/{sample}/mngs_reads_1.txt",
+        config["msspe"]["data_dir"] + "/msspe_reads/{sample}/mngs_reads_1.fq",
+    output:
+        config["project_dir"] + "/6_matched_kmers_msspe/{sample}/pcr_reads_1.fasta",
+        config["project_dir"] + "/6_matched_kmers_msspe/{sample}/mngs_reads_1.fasta",
+    threads:
+        8
+    shell:
+        """
+        if [ -s {input[0]} ]
+        then
+            cat {input[0]} | sort -u | grep --no-group-separator -B1 -f - {input[1]} > {output[0]}
+        else
+            touch {output[0]}
+        fi
+
+        if [ -s {input[2]} ]
+        then
+            cat {input[2]} | sort -u | grep --no-group-separator -B1 -f - {input[3]} > {output[1]}
+        else
+            touch {output[1]}
+        fi
+        """
+
+
+rule matched_neighbor_reads_mapping_msspe:
+    input:
+        config["project_dir"] + "/5_jf_msspe/{sample}/pcr_reads_1.tsv",
+        config["project_dir"] + "/6_matched_kmers_msspe/{sample}/pcr_reads_1.fasta",
+
+        config["project_dir"] + "/5_jf_msspe/{sample}/mngs_reads_1.tsv",
+        config["project_dir"] + "/6_matched_kmers_msspe/{sample}/mngs_reads_1.fasta",
+    output:
+        config["project_dir"] + "/7_matched_neighbors_reads_msspe/{sample}_pcr_1.tsv",
+        config["project_dir"] + "/7_matched_neighbors_reads_msspe/{sample}_mngs_1.tsv"
+    threads:
+        8
+    params:
+        config["project_dir"] + "/7_matched_neighbors_reads_msspe",
+        config["guide_fasta"]
+    shell:
+        """
+        if [ -s {input[1]} ]
+        then
+          python isscrlib/isscr.py --query_matched_reads --num_cores {threads} \
+              --sample_name {wildcards.sample}_pcr_1 --candidate_spacers_file {params[1]} \
+              --merged_kmers_file {input[0]} \
+              --subset_reads_fasta {input[1]} \
+              --output_dir {params[0]}
+        else
+          touch {output[0]}
+        fi
+
+
+        if [ -s {input[3]} ]
+        then
+          python isscrlib/isscr.py --query_matched_reads --num_cores {threads} \
+              --sample_name {wildcards.sample}_mngs_1 --candidate_spacers_file {params[1]} \
+              --merged_kmers_file {input[2]} \
+              --subset_reads_fasta {input[3]} \
+              --output_dir {params[0]}
+        else
+          touch {output[1]}
+        fi
+        """

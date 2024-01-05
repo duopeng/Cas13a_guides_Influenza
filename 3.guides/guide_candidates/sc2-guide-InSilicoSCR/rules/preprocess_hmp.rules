@@ -1,0 +1,49 @@
+
+# downalod HMP and build kmer for hmp reads using jellyfish
+
+
+rule _all_hmp_samples:
+    input:
+        expand(config["hmp1"]["data_dir"] + "/jf_kmers/{sample}.jf", sample=HMP1_SAMPLES)
+
+
+rule download_hmp:
+    input:
+        config["hmp1"]["metadata_fp"]
+    output:
+        #expand(config["hmp1"]["data_dir"] + "/raw/{sample}.tar.bz2", sample=HMP1_SAMPLES)
+        config["hmp1"]["data_dir"] + "/raw/done"
+    threads:
+        8
+    params:
+        config["hmp1"]["data_dir"] + "/raw"
+    shell:
+        """
+        cut -d',' -f 3 {input[0]} | xargs -Ixx -P {threads} bash -c "wget http://downloads.hmpdacc.orgxx -P {params[0]}"
+        """
+
+
+rule untar_hmp:
+    input:
+        config["hmp1"]["data_dir"] + "/raw/{sample}.tar.bz2"
+    output:
+        config["hmp1"]["data_dir"] + "/raw/{sample}/{sample}.denovo_duplicates_marked.trimmed.1.fastq"
+    threads:
+        8
+    shell:
+        """
+        tar -xf {input[0]}
+        """
+
+
+rule kmerize_hmp_reads:
+    input:
+        config["hmp1"]["data_dir"] + "/raw/{sample}/{sample}.denovo_duplicates_marked.trimmed.1.fastq"
+    output:
+        config["hmp1"]["data_dir"] + "/jf_kmers/{sample}.jf"
+    threads:
+        8
+    shell:
+        """
+        jellyfish count -m 20 -t {threads} -C -s 100M -o {output[0]} {input[0]}
+        """
