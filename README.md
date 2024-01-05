@@ -1,6 +1,6 @@
 # Cas13a guides for Influenza detection
 
-This workflow is used to predict Cas13a guides for Influenza. 
+This workflow is used to predict Cas13a guides for Influenza detection. 
 - Analyzes ***all*** 20nt windows in ***all*** influenza sequences (downloaded from bbvrc.org).  
 - Collapes guides with identical sequences, and compute the number of segment, strain and subtype each can target.
 - Select guides that target the most segments, strains or subtypes.
@@ -68,7 +68,7 @@ produce output file: `Influenza_sequence_description_parsed.txt` in directory `o
 
 
 ### 3.1 get guides table
-This step:
+This step (3.1):
 - analyzes ***all*** 20nt windows in ***all*** sequences (enumerated in previous steps) 
 - Compute segment, strain and subtype coverage for each guide
 - Result table is saved to `guides_table.tsv` in directory `3.guides`
