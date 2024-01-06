@@ -32,7 +32,7 @@ Add executables `kraken2` and `kraken2-build` to the PATH environment variable.
 
 <br>
 
-# Guide prediction pipeline stage 1: download and process Influenza genomes
+# Guide prediction pipeline stage 1: download Influenza genomes
 
 ### download Orthomyxoviridae genomes/sequences
 note that for the downloads, we use genomes and sequences interchangeably.
@@ -120,7 +120,6 @@ mv crRNAs.txt crRNAs_RNAfold.txt score_RNAfold_crRNAs.txt crRNAs_RNAfold/
 ```
 
 ### 3.4 check cross-reactivity against hg38 transcriptome
-
 get human latest transcriptome and build bowtie index
 ```shell
 cd ..
@@ -133,6 +132,7 @@ bowtie-build GRCh38_latest_rna.fna GRCh38_latest_rna
 ```
 
 align guides against human transcriptome
+script `align_bowtie.R` taken from https://github.com/lareaulab/cas13a_guide_design  
 ```shell
 # in 3.guides/guide_candidates/check_alignment_to_hg38
 rm bowtie_GRCh38_latest_rna_mapped.sam
@@ -147,7 +147,8 @@ module load gcc #required by kraken2
 kraken2-build --standard --threads 64 --kmer-len 20 --minimizer-len 20 --minimizer-spaces 5 --db kraken2_standard_db &> kraken2_std_db_build.log
 ```
 
-generate guide neighbors (sequences with 1, 2, 3, 4 mismatches), takes a few hours
+generate guide neighbors (sequences with 1, 2, 3, 4 mismatches), takes a few hours  
+contents of directory `sc2-guide-InSilicoSCR` taken from https://github.com/czbiohub-sf/sc2-guide-InSilicoSCR  
 ```shell
 conda activate /hpc/mydata/duo.peng/anaconda/2023.03/x86_64/envs/isscr
 cd ../sc2-guide-InSilicoSCR && cp ../targets.fa ./
@@ -166,7 +167,6 @@ python ../../scripts/parse_Kraken2_res.py --num_workers 64 --kraken2_res_folder 
 ```
 
 ### 3.6. combine cross-reactivity and fold results
-
 ```shell
 # in folder 3.guides/guide_candidates
 python ../../scripts/combine_filter_results.py \
