@@ -1,19 +1,38 @@
 # Cas13a guides for Influenza detection
 
 This workflow is used to predict Cas13a guides for Influenza detection. 
-- Analyzes ***all*** 20nt windows in ***all*** influenza sequences (downloaded from bbvrc.org).  
-- Collapes guides with identical sequences, and compute the number of segment, strain and subtype each can target.
+- Analyzes ***all*** 20nt windows in ***all*** influenza sequences (downloaded from bbvrc.org in this workflow).  
+- Compute the number of segment, strain and subtype each guide can target.
 - Select guides that target the most segments, strains or subtypes.
 - Analyze crRNA folding structures using RNAfold.
 - Check cross-reactivity against human transcriptome and common microbes.
-- The computation pipline is divided into two **stages**:  
+- The computation pipline is divided into three stages:  
     1. download Influenza genomes
     2. preprocess Influenza genomes  
     3. analyze Cas13a guides  
 
+<br>
 
-## Stage 1. download and process Influenza genomes
+# Setup
 
+### clone repository
+```shell
+git clone https://github.com/duopeng/Cas13a_guides_Influenza
+```
+
+### create conda environment
+```shell
+conda env create -f environment.yml
+```
+
+### install kraken2
+Follow  [instructions](https://github.com/DerrickWood/kraken2/blob/master/docs/MANUAL.markdown#installation) to install Kraken2.   
+Add executables `kraken2` and `kraken2-build` to the PATH environment variable.  
+(Kraken2 is used to check guide's cross-reactivity with microbes) 
+
+<br>
+
+# Guide prediction pipeline stage 1: download and process Influenza genomes
 
 ### download Orthomyxoviridae genomes/sequences
 note that for the downloads, we use genomes and sequences interchangeably.
@@ -40,7 +59,9 @@ n=10
 python ../scripts/split_fasta.py -f Orthomyxoviridae.fna.Influenza.fa -n $n
 ```
 
-## Stage 2.
+<br>
+
+# Guide prediction pipeline  Stage 2: preprocess Influenza genomes
 ### 2.1 break genomes into tiling windows of 20nt (guides length)
 
 (submitting 10 slurm jobs via sbatch, takes ~1hr on hpc)  
@@ -64,9 +85,7 @@ produce output file: `Influenza_sequence_description_parsed.txt` in directory `o
 
 <br>
 
-## Stage 3. analyze Cas13a guides
-
-
+# Guide prediction pipeline stage 3: analyze Cas13a guides
 ### 3.1 get guides table
 This step (3.1):
 - analyzes ***all*** 20nt windows in ***all*** sequences (enumerated in previous steps) 
